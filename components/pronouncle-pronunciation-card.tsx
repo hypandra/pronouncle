@@ -1,28 +1,25 @@
 "use client"
 
-import { useState, useRef } from "react"
+import { useState } from "react"
 import { Volume2 } from "lucide-react"
+import { unlockAudio } from "@/lib/audio"
 
 const PRONOUNCLE_AUDIO_URL =
   "https://pronouncle.b-cdn.net/tts/539a6eeb2d764b65a76bbd3c988831ff64b96dfec6a047b26fe1df9800961a5a.mp3"
 
 export function PronounclePronunciationCard() {
   const [isPlaying, setIsPlaying] = useState(false)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
 
   const handlePlay = () => {
     if (isPlaying) return
     setIsPlaying(true)
 
-    if (audioRef.current) {
-      audioRef.current.pause()
-    }
-
-    const audio = new Audio(PRONOUNCLE_AUDIO_URL)
-    audioRef.current = audio
+    // Unlock audio within user gesture, then reuse the element
+    const audio = unlockAudio()
     audio.onended = () => setIsPlaying(false)
     audio.onerror = () => setIsPlaying(false)
-    audio.play()
+    audio.src = PRONOUNCLE_AUDIO_URL
+    audio.play().catch(() => setIsPlaying(false))
   }
 
   return (
