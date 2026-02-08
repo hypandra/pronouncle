@@ -4,6 +4,28 @@
 
 import type { TtsSpeed, TtsVoice } from "@/lib/tts/generate-audio"
 
+// Tiny silent MP3 — used to unlock an HTMLAudioElement within a user gesture
+// so that later (post-async) play() calls are allowed on iOS Safari.
+const SILENT_MP3 =
+  "data:audio/mpeg;base64,SUQzBAAAAAABEVRYWFgAAAAtAAADY29tbWVudABCaWdTb3VuZEJhbmsuY29tIC8gTGFTb25vdGhlcXVlLmNvbQBURU5DAAAAHQAAA1NvZnR3YXJlAExhdmY1Ni40MC4xMDEAAAAAAAAAAAAAAAD/80DEAAAAA0gAAAAATEFNRTMuMTAwVVVVVVVVVVVVVUxBTUUzLjEwMFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVf/zQsRbAAADSAAAAABVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVQ=="
+
+// Singleton audio element, unlocked on first user gesture
+let unlockedAudio: HTMLAudioElement | null = null
+
+/**
+ * Unlock audio playback on iOS Safari. Must be called synchronously
+ * inside a user gesture handler (click/tap) BEFORE any async work.
+ * Returns the unlocked HTMLAudioElement for reuse.
+ */
+export function unlockAudio(): HTMLAudioElement {
+  if (!unlockedAudio) {
+    unlockedAudio = new Audio()
+  }
+  unlockedAudio.src = SILENT_MP3
+  unlockedAudio.play().catch(() => {})
+  return unlockedAudio
+}
+
 // Check if speech synthesis is available
 export function isSpeechSynthesisAvailable(): boolean {
   return typeof window !== "undefined" && "speechSynthesis" in window
@@ -76,11 +98,16 @@ export function speak(
   }
 
   const playOpenTts = async () => {
-    if (currentAudio) {
+    // Unlock audio element synchronously within the user gesture,
+    // BEFORE any async work. iOS Safari expires the gesture budget
+    // after the first await, so this must come first.
+    const audio = unlockAudio()
+
+    if (currentAudio && currentAudio !== audio) {
       currentAudio.pause()
       currentAudio.src = ""
-      currentAudio = null
     }
+    currentAudio = audio
 
     const response = await fetch("/api/tts", {
       method: "POST",
@@ -99,21 +126,21 @@ export function speak(
     const audioBuffer = await response.arrayBuffer()
     const blob = new Blob([audioBuffer], { type: "audio/mpeg" })
     const url = URL.createObjectURL(blob)
-    const audio = new Audio(url)
-    currentAudio = audio
 
+    // Reuse the already-unlocked element — iOS allows play() on it
     audio.onended = () => {
       URL.revokeObjectURL(url)
-      currentAudio = null
+      if (currentAudio === audio) currentAudio = null
       options.onEnd?.()
     }
 
     audio.onerror = () => {
       URL.revokeObjectURL(url)
-      currentAudio = null
+      if (currentAudio === audio) currentAudio = null
       options.onEnd?.()
     }
 
+    audio.src = url
     await audio.play()
   }
 
